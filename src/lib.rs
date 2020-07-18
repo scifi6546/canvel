@@ -1,21 +1,24 @@
 use std::collections::HashMap;
+use std::fs::File;
 use std::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::vec::Vec;
 mod block;
+use block::{Block,Serialize};
 
 trait DbSized {
     const SIZE: u32;
 }
-trait Seralize {
-    fn to_bytes(&self) -> Vec<u8>;
-    fn from_bytes(&mut self, bytes: Vec<u8>);
-}
-impl Seralize for Row {
+impl Serialize for Row {
     fn to_bytes(&self) -> Vec<u8> {
         self.test_data.to_le_bytes().to_vec()
     }
-    fn from_bytes(&mut self, bytes: Vec<u8>) {
-        self.test_data = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    fn from_bytes(bytes: Vec<u8>)->Self {
+        Row{
+            test_data:u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        }
+    }
+    fn size_of()->usize{
+        4
     }
 }
 #[derive(Clone)]
@@ -26,11 +29,12 @@ pub enum DBError {
     IDNotInDatabase,
 }
 type ID = u32;
-pub struct DB {
-    data: RwLock<Vec<Mutex<HashMap<ID, Row>>>>,
+pub struct DB<'a> {
+    file: File,
+    data: RwLock<Vec<Mutex<Block<'a,Row>>>>,
 }
-unsafe impl Sync for DB {}
-impl DB {
+//unsafe impl Sync for DB {}
+impl<'a> DB<'a> {
     const MUTEX_SIZE: u32 = 4096;
     pub fn get_row(&self, id: ID) -> Result<Row, DBError> {
         if Self::contains_id(self.data.read().ok().unwrap(), id) {
@@ -45,35 +49,39 @@ impl DB {
             Err(DBError::IDNotInDatabase)
         }
     }
-    pub fn from_rows(data: &Vec<Row>) -> (Self, Vec<ID>) {
-        let mut db = DB {
-            data: RwLock::new(vec![]),
-        };
-        let mut current_id = 0;
-        for row in data.iter() {
-            //if at block boundry
-            if current_id % Self::MUTEX_SIZE == 0 {
-                db.data
-                    .write()
-                    .ok()
-                    .unwrap()
-                    .push(Mutex::new(HashMap::new()));
-            }
-            db.data.write().ok().unwrap()[(current_id / Self::MUTEX_SIZE) as usize]
-                .lock()
-                .ok()
-                .unwrap()
-                .insert(current_id, row.clone());
-            current_id += 1;
-        }
-        return (db, (0..current_id).collect());
+    //pub fn from_rows(data: &Vec<Row>) -> (Self, Vec<ID>) {
+    //    let mut db = DB {
+    //        data: RwLock::new(vec![]),
+    //    };
+    //    let mut current_id = 0;
+    //    for row in data.iter() {
+    //        //if at block boundry
+    //        if current_id % Self::MUTEX_SIZE == 0 {
+    //            db.data
+    //                .write()
+    //                .ok()
+    //                .unwrap()
+    //                .push(Mutex::new(HashMap::new()));
+    //        }
+    //        db.data.write().ok().unwrap()[(current_id / Self::MUTEX_SIZE) as usize]
+    //            .lock()
+    //            .ok()
+    //            .unwrap()
+    //            .insert(current_id, row.clone());
+    //        current_id += 1;
+    //    }
+    //    return (db, (0..current_id).collect());
+    //}
+    //increases capacity of db by size
+    fn grow<'b>(data: &'b mut RwLockWriteGuard<'_, Vec<Mutex<Block<'b,Row>>>>,size:usize){
+        unimplemented!();
     }
     //Returns id and lock to current block to ensure that id is not taken
-    fn get_free_id<'a, 'b>(
-        data: &'b mut RwLockWriteGuard<'_, Vec<Mutex<HashMap<ID, Row>>>>,
+    fn get_free_id<'b>(
+        data: &'b mut RwLockWriteGuard<'_, Vec<Mutex<Block<'b,Row>>>>,
     ) -> (
         ID,
-        std::sync::MutexGuard<'b, std::collections::HashMap<u32, Row>>,
+        std::sync::MutexGuard<'b, Block<'b,Row>>,
     ) {
         {
             for i in 0..data.len() {
@@ -81,7 +89,7 @@ impl DB {
                 if data[i].lock().ok().unwrap().len() < Self::MUTEX_SIZE as usize {
                     //looking for free index
                     for j in (i as u32 * Self::MUTEX_SIZE)..(i as u32 + 1) * Self::MUTEX_SIZE {
-                        if data[i].lock().ok().unwrap().contains_key(&j) == false {
+                        if data[i].lock().ok().unwrap().contains(j) == false {
                             return (j, data[i].lock().ok().unwrap());
                         }
                     }
@@ -90,7 +98,7 @@ impl DB {
                 }
             }
         }
-        data.push(Mutex::new(HashMap::new()));
+        Self::grow(data,1);
         let lock = data[data.len() - 1].lock().ok().unwrap();
         let id = (data.len() as u32 - 1) * Self::MUTEX_SIZE;
         return (id, lock);
@@ -116,7 +124,7 @@ impl DB {
             .unwrap()
             .insert(id, row);
     }
-    fn contains_id(data: RwLockReadGuard<'_, Vec<Mutex<HashMap<u32, Row>>>>, id: ID) -> bool {
+    fn contains_id(data: RwLockReadGuard<'_, Vec<Mutex<Block<Row>>>>, id: ID) -> bool {
         if ((id / Self::MUTEX_SIZE) as usize) < data.len() {
             return data[(id / Self::MUTEX_SIZE) as usize]
                 .lock()

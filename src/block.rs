@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::SeekFrom;
 use std::io::{Seek, Write,Read};
+use std::ops::Index; 
 use std::fs::OpenOptions;
 pub type Id = u32;
 pub trait Serialize {
@@ -23,6 +24,15 @@ pub struct Block<'a,Row: Serialize+Clone> {
     file: &'a mut File,
     data: HashMap<Id, Row>,
     index_start: Id, //index of smallest element
+}
+impl <'a,Row:Serialize+Clone+std::marker::Sized> Index<&Id> for Block<'a,Row>{
+    type Output = Row;
+    fn index(&self,i:&Id)->&Self::Output{
+        self.get(i.clone())
+
+    }
+
+
 }
 impl<'a,Row: Serialize + Clone+std::marker::Sized> Block<'a,Row> {
     const BLOCK_SIZE: u32 = 4096;
