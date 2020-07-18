@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::fs::File;
 use std::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::vec::Vec;
@@ -49,39 +50,40 @@ impl<'a> DB<'a> {
             Err(DBError::IDNotInDatabase)
         }
     }
-    //pub fn from_rows(data: &Vec<Row>) -> (Self, Vec<ID>) {
-    //    let mut db = DB {
-    //        data: RwLock::new(vec![]),
-    //    };
-    //    let mut current_id = 0;
-    //    for row in data.iter() {
-    //        //if at block boundry
-    //        if current_id % Self::MUTEX_SIZE == 0 {
-    //            db.data
-    //                .write()
-    //                .ok()
-    //                .unwrap()
-    //                .push(Mutex::new(HashMap::new()));
-    //        }
-    //        db.data.write().ok().unwrap()[(current_id / Self::MUTEX_SIZE) as usize]
-    //            .lock()
-    //            .ok()
-    //            .unwrap()
-    //            .insert(current_id, row.clone());
-    //        current_id += 1;
-    //    }
-    //    return (db, (0..current_id).collect());
-    //}
+    //creates new database with rows.
+    //overwrites contents
+    pub fn from_rows(data: &Vec<Row>,database_path:&str) -> (Self, Vec<ID>) {
+
+        let mut file = OpenOptions::new().write(true).read(true).create(true).open(database_path).ok().unwrap();
+        let mut blocks = vec![];
+        //increasing block size by one
+        let mut num_blocks = data.len()/Block::<Row>::BLOCK_SIZE as usize;
+        if data.len()%Block::<Row>::BLOCK_SIZE as usize!=0{
+            num_blocks+=1;
+        }
+        blocks.reserve(num_blocks);
+        for i in 0..num_blocks{
+            blocks.push(Mutex::new(Block::new(&mut file,i as u32*Block::<Row>::BLOCK_SIZE)));
+        }
+        let mut db = DB{
+            file:file,
+            data:RwLock::new(blocks)
+        };
+        let ids = data.iter().map(|r|{db.insert(r.clone())}).collect();
+        return (db,ids);
+
+
+    }
     //increases capacity of db by size
-    fn grow<'b>(data: &'b mut RwLockWriteGuard<'_, Vec<Mutex<Block<'b,Row>>>>,size:usize){
+    fn grow<'b>(data: &'b mut RwLockWriteGuard<'b, Vec<Mutex<Block<'a,Row>>>>,size:usize){
         unimplemented!();
     }
     //Returns id and lock to current block to ensure that id is not taken
     fn get_free_id<'b>(
-        data: &'b mut RwLockWriteGuard<'_, Vec<Mutex<Block<'b,Row>>>>,
+        data: &'b mut RwLockWriteGuard<'b, Vec<Mutex<Block<'a,Row>>>>,
     ) -> (
         ID,
-        std::sync::MutexGuard<'b, Block<'b,Row>>,
+        std::sync::MutexGuard<'b, Block<'a,Row>>,
     ) {
         {
             for i in 0..data.len() {
@@ -104,16 +106,17 @@ impl<'a> DB<'a> {
         return (id, lock);
     }
     //inserts new row into database.
-    pub fn insert_row(&mut self, row: Row) {
+    pub fn insert(&mut self, row: Row)->ID {
         let mut write_lock = self.data.write().ok().unwrap();
         let (id, mut block) = Self::get_free_id(&mut write_lock);
         block.insert(id, row);
+        return id;
     }
     /// Update row. Undefined if row is not already present
     fn update_inplace_row(
         data: RwLockReadGuard<
             '_,
-            std::vec::Vec<std::sync::Mutex<std::collections::HashMap<u32, Row>>>,
+            std::vec::Vec<std::sync::Mutex<Block<'a, Row>>>,
         >,
         id: ID,
         row: Row,
@@ -130,7 +133,7 @@ impl<'a> DB<'a> {
                 .lock()
                 .ok()
                 .unwrap()
-                .contains_key(&id);
+                .contains(id);
         } else {
             return false;
         }
@@ -151,7 +154,7 @@ impl<'a> DB<'a> {
             self.data.read().ok().unwrap()[(id / Self::MUTEX_SIZE) as usize]
                 .lock()
                 .unwrap()
-                .remove(&id);
+                .remove(id);
             Ok(())
         } else {
             Err(DBError::IDNotInDatabase)
@@ -166,21 +169,21 @@ mod tests {
     }
     #[test]
     fn make_db() {
-        let db0 = DB::from_rows(&make_rows(0));
-        let db1 = DB::from_rows(&make_rows(4096));
-        let db2 = DB::from_rows(&make_rows(5000));
+        let db0 = DB::from_rows(&make_rows(0),"test1.db");
+        let db1 = DB::from_rows(&make_rows(4096),"test2.db");
+        let db2 = DB::from_rows(&make_rows(5000),"test3.db");
         assert_eq!(2 + 2, 4);
     }
     #[test]
     fn make_and_get() {
-        let (db2, ids) = DB::from_rows(&make_rows(5000));
+        let (db2, ids) = DB::from_rows(&make_rows(5000),"test4.db");
         for i in 0..5000 {
             assert_eq!(db2.get_row(i).ok().unwrap().test_data, i);
         }
     }
     #[test]
     fn update_row() {
-        let (mut db2, ids) = DB::from_rows(&make_rows(5000));
+        let (mut db2, ids) = DB::from_rows(&make_rows(5000),"test5.db");
         for id in ids.iter() {
             unsafe {
                 db2.update_row(id.clone(), Row { test_data: 0 });
