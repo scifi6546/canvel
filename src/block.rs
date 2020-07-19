@@ -189,6 +189,8 @@ impl<Row: Serialize + Clone + std::marker::Sized> Block<Row> {
 mod test {
     use super::*;
     use std::fs::OpenOptions;
+    use super::*;
+    extern crate test;
     impl Serialize for u32 {
         fn size_of() -> usize {
             4

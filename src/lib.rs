@@ -1,3 +1,4 @@
+#![feature(test)]
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -86,8 +87,13 @@ impl DB {
         //first lets find the len
         let BLOCK_SIZE = Block::<Row>::BLOCK_SIZE;
         let len:usize = data.iter().map(|b|{b.lock().ok().unwrap().len()}).sum();
-        let resize_amount:usize = (len as usize+size as usize)/BLOCK_SIZE as usize-len/BLOCK_SIZE as usize;
-        if resize_amount!=0{
+        
+        let mut resized_block_count = (len+size)/BLOCK_SIZE as usize;
+        if (len+size)%BLOCK_SIZE as usize!=0{
+            resized_block_count+=1;
+        }
+        if resized_block_count!=data.len(){
+
             let mut new_block_count = (len+size)/BLOCK_SIZE as usize;
             if (len+size)%BLOCK_SIZE as usize!=0{
                 new_block_count+=1;
@@ -181,7 +187,10 @@ impl DB {
 }
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    extern crate test;
+    use test::Bencher;
     fn make_rows(num: u32) -> Vec<Row> {
         (0..num).map(|i| Row { test_data: i }).collect()
     }
@@ -208,5 +217,27 @@ mod tests {
         for id in ids {
             assert_eq!(db2.get_row(id).ok().unwrap().test_data, 0);
         }
+    }
+    #[test]
+    fn test_resize(){
+        let (mut db,_) = DB::from_rows(&vec![],"test_resize.db");
+        let rows = make_rows(1_000);
+        let ids:Vec<ID> = rows.iter().map(|r|{db.insert(r.clone())}).collect();
+        for id in ids.iter(){
+            assert_eq!(db.get_row(id.clone()).ok().unwrap().test_data,id.clone());
+
+        }
+
+
+    }
+    #[bench]
+    fn bench_insert(b: &mut Bencher){
+        let (mut db,_) = DB::from_rows(&vec![],"bench_insert.db");
+        let rows = make_rows(1);
+        b.iter(||{
+            db.insert(rows[0].clone());
+
+        });
+
     }
 }
